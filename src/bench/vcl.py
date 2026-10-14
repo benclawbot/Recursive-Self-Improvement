@@ -94,7 +94,8 @@ def load_suite(path: Path) -> Suite:
             for c in item["checks"]:
                 if not isinstance(c, dict) or not {"field", "op"} <= set(c) or set(c) - {"field", "op", "expected", "critical"}:
                     raise ValueError("invalid check shape")
-                if not isinstance(c["field"], str) or not FIELD_RE.fullmatch(c["field"]):
+                if (not isinstance(c["field"], str) or not FIELD_RE.fullmatch(c["field"])
+                        or not c["field"].startswith("observations.")):
                     raise ValueError("unsafe field name")
                 if c["op"] not in ALLOWED_OPS or (c["op"] != "exists" and "expected" not in c):
                     raise ValueError("invalid check operation")
