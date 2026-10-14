@@ -380,14 +380,15 @@ os.environ.pop("TELEGRAM_BOT_TOKEN", None)
 import importlib
 import digest
 importlib.reload(digest)
+# Test the real current digest entry point against the disposable database.
+digest.DB = db.DB_PATH
+digest.LOGS_DIR = _TEST_ROOT / "logs"
 try:
-    msg = digest.build_weekly_digest()
-    check("digest.build_weekly_digest returned", isinstance(msg, str))
-    check("digest contains branch line", "Branch" in msg or "branch" in msg.lower(),
-          f"snippet: {msg[msg.find('Branch')-20:msg.find('Branch')+60] if 'Branch' in msg else 'no match'}")
+    msg = digest._build_digest()
+    check("digest builds against isolated DB", isinstance(msg, str))
+    check("digest includes pipeline context", "CONTEXT" in msg and "Pipeline 7d" in msg)
 except Exception as e:
-    check("digest.build_weekly_digest no exception", False, f"exception: {e}")
-
+    check("digest builds without exception", False, f"exception: {e}")
 
 # ──────────────────────────────────────────────────────────────────────
 # Final report
