@@ -209,6 +209,20 @@ class VCLTests(unittest.TestCase):
                                 self.assertEqual(target.read_text(),"Be honest.\\n")
                                 summary=promotion.run()
                                 self.assertEqual(summary["promote"],1,summary)
+                                # Automatic promotion must create persistent learning
+                                # feedback and passive evidence for the operator.
+                                with db.conn() as conn:
+                                    feedback=conn.execute(
+                                        "SELECT category, content FROM lessons_learned WHERE source=?",
+                                        (f"vcl:{pid}",)).fetchone()
+                                self.assertIsNotNone(feedback)
+                                self.assertEqual(feedback["category"],"lesson")
+                                self.assertIn("aggregate_gain",feedback["content"])
+                                import digest
+                                with mock.patch.object(digest,"DB",db.DB_PATH):
+                                    text=digest._build_digest()
+                                self.assertIn("VERIFIED LEARNING",text)
+                                self.assertIn(f"#{pid} promote",text)
                                 self.assertTrue(promotion.authorization(p))
                                 # Suite tampering invalidates an otherwise good proof.
                                 original_suite=self.suite_file.read_bytes()
