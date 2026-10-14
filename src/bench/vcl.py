@@ -295,6 +295,10 @@ def evaluate(proposal: dict, *, suite_path: Path, runner_path: Path,
             _copy_limited(skills_root if name == "skills" else memories_root, dest)
         for name in ("skills", "memories"):
             _copy_limited(baseline / name, candidate / name)
+        # Bind the full evaluation context, not just the changed skill:
+        # unrelated memory/skill edits can change agent behavior.
+        baseline_skills_tree_sha = tree_hash(baseline / "skills")
+        baseline_memories_tree_sha = tree_hash(baseline / "memories")
         apply_candidate_copy(candidate / "skills" / rel, proposal["diff"])
         candidate_sha = file_hash(candidate / "skills" / rel)
         baseline_scores, candidate_scores = [], []
@@ -315,5 +319,7 @@ def evaluate(proposal: dict, *, suite_path: Path, runner_path: Path,
         return {**verdict, "suite_version": suite.version, "suite_sha256": suite.digest,
                 "runner_sha256": runner_sha256, "policy_sha256": policy.digest(),
                 "baseline_file_sha256": baseline_file_sha, "candidate_file_sha256": candidate_sha,
+                "baseline_skills_tree_sha256": baseline_skills_tree_sha,
+                "baseline_memories_tree_sha256": baseline_memories_tree_sha,
                 "diff_sha256": _hash(proposal["diff"].encode()),
                 "baseline": baseline_scores, "candidate": candidate_scores}
