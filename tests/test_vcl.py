@@ -83,8 +83,16 @@ class VCLTests(unittest.TestCase):
         self.assertEqual(len(report["baseline"]),len(report["candidate"]))
 
     def test_unchanged_behavior_is_not_an_improvement(self):
-        p=dict(self.proposal,diff="APPEND:\nExtra punctuation!")
-        self.assertEqual(self._evaluate(p)["decision"],"hold")
+        # All baseline cases already succeed: irrelevant instructions
+        # cannot be promoted just because they don't cause a regression.
+        suite=json.loads(self.suite_file.read_text())
+        for i, case in enumerate(suite["cases"]):
+            case["id"] = f"already-good-{i}-ok"
+        self.suite_file.write_text(json.dumps(suite))
+        p=dict(self.proposal,diff="APPEND:\\nExtra punctuation!")
+        report=self._evaluate(p)
+        self.assertEqual(report["decision"],"hold",report)
+        self.assertEqual(report["gain"],0.0)
 
     def test_critical_failure_vetoes_even_positive_gain(self):
         b=[{"case_id":str(i),"score":0.0,"critical_failures":[]} for i in range(10)]
