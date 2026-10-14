@@ -154,5 +154,89 @@ class VCLTests(unittest.TestCase):
         self.assertEqual(self._evaluate()["decision"],"promote")
         self.assertEqual(self.target.read_text(),"Be honest.\n")
 
+    def test_full_promotion_and_live_apply_rejects_bypasses(self):
+        # Exercises real RSI SQLite lifecycle and the live apply gate, not
+        # just score comparison. State is redirected into a disposable HOME.
+        import db
+        import apply
+        from bench import promotion
+        from unittest import mock
+        home=self.root / "agent-home"
+        skills=home / ".hermes" / "skills"
+        memories=home / ".hermes" / "memories"
+        (skills/"sample").mkdir(parents=True)
+        memories.mkdir(parents=True)
+        target=skills/"sample"/"SKILL.md"
+        target.write_text("Be honest.\\n")
+        (memories/"history.md").write_text("Previous relevant experience.\\n")
+        environ={"HOME":str(home),"SRI_VCL_ENABLED":"1",
+                 "SRI_VCL_SUITE":str(self.suite_file),
+                 "SRI_VCL_RUNNER":str(self.runner),
+                 "SRI_VCL_RUNNER_SHA256":self.runner_sha}
+        with mock.patch.dict(os.environ,environ):
+            with mock.patch.object(db,"DB_PATH",self.root/"isolated.db"):
+                with mock.patch.object(apply,"HERMES_SKILLS",skills):
+                    with mock.patch.object(apply,"HERMES_MEMORIES",memories):
+                        with mock.patch.object(apply,"BACKUP_DIR",self.root/"backups"):
+                            with mock.patch.object(apply,"LOG_FILE",self.root/"apply.log"):
+                                db.init_db()
+                                pid=db.add_proposal(
+                                    target_kind="skill_patch",
+                                    target_path=str(target),
+                                    diff=self.proposal["diff"],
+                                    evidence="observed prior failures",
+                                    rationale="Report outcomes accurately")
+                                db.add_judge_verdict(pid,"MiniMax-M2.7","approve",0.9,"approved")
+                                p={"id":pid,"target_kind":"skill_patch",
+                                   "target_path":str(target),"diff":self.proposal["diff"]}
+                                # Human approval alone must never bypass VCL.
+                                manual=dict(p,id=9999)
+                                self.assertFalse(promotion.authorization(manual))
+                                self.assertFalse(apply.apply_proposal(manual))
+                                self.assertEqual(target.read_text(),"Be honest.\\n")
+                                summary=promotion.run()
+                                self.assertEqual(summary["promote"],1,summary)
+                                self.assertTrue(promotion.authorization(p))
+                                # Suite tampering invalidates an otherwise good proof.
+                                original_suite=self.suite_file.read_bytes()
+                                self.suite_file.write_bytes(original_suite+b" ")
+                                self.assertFalse(promotion.authorization(p))
+                                self.suite_file.write_bytes(original_suite)
+                                self.assertTrue(promotion.authorization(p))
+                                # A stale target also invalidates the authorization.
+                                target.write_text("Modified after evaluation!")
+                                self.assertFalse(promotion.authorization(p))
+                                target.write_text("Be honest.\\n")
+                                self.assertTrue(apply.apply_proposal(p))
+                                self.assertIn("Always report test failures",target.read_text())
+                                self.assertTrue(promotion.post_apply_matches(p))
+                                # Reapplication cannot pass precondition.
+                                self.assertFalse(promotion.authorization(p))
+
+    def test_unsupported_memory_update_is_held_without_operator(self):
+        import db
+        from bench import promotion
+        from unittest import mock
+        with mock.patch.dict(os.environ,{"SRI_VCL_ENABLED":"1",
+                 "SRI_VCL_SUITE":str(self.suite_file),
+                 "SRI_VCL_RUNNER":str(self.runner),
+                 "SRI_VCL_RUNNER_SHA256":self.runner_sha}):
+            with mock.patch.object(db,"DB_PATH",self.root/"held.db"):
+                db.init_db()
+                pid=db.add_proposal(target_kind="memory_add",
+                                    target_path=str(self.memories/"history.md"),
+                                    diff="APPEND:\\nNever reveal secrets",
+                                    evidence="old incident",rationale="memory")
+                db.add_judge_verdict(pid,"MiniMax-M2.7","approve",0.9,"approved")
+                summary=promotion.run()
+                self.assertEqual(summary["hold"],1,summary)
+                with db.conn() as conn:
+                    row=conn.execute("SELECT status FROM proposals WHERE id=?",(pid,)).fetchone()
+                self.assertEqual(row["status"],"held")
+                self.assertFalse(promotion.authorization({
+                    "id":pid,"target_kind":"memory_add",
+                    "target_path":str(self.memories/"history.md"),
+                    "diff":"APPEND:\\nNever reveal secrets"}))
+
 if __name__=="__main__":
     unittest.main()
