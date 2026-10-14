@@ -99,6 +99,25 @@ class VCLTests(unittest.TestCase):
         self.assertEqual(report["decision"],"hold",report)
         self.assertEqual(report["gain"],0.0)
 
+    def test_swapped_assertion_cannot_hide_regression_within_a_case(self):
+        # Case 0 remains at 50% while a previously passing assertion fails.
+        # Three other cases improve enough for the aggregate score to pass.
+        # The gate must check assertions, not just mean case scores.
+        pair = Case("swap", "swap",
+                    (Check("observations.a", "eq", True),
+                     Check("observations.b", "eq", True)))
+        baseline = [score_case(pair, {"observations": {"a": True, "b": False}})]
+        candidate = [score_case(pair, {"observations": {"a": False, "b": True}})]
+        for i in range(1, 10):
+            case = Case(f"case-{i}", "input", (Check("observations.ok", "eq", True),))
+            baseline.append(score_case(case, {"observations": {"ok": i > 3}}))
+            candidate.append(score_case(case, {"observations": {"ok": True}}))
+        self.assertEqual(sum(x["score"] for x in baseline), 6.5)
+        self.assertEqual(sum(x["score"] for x in candidate), 9.5)
+        decision = decide(baseline, candidate)
+        self.assertEqual(decision["decision"], "reject")
+        self.assertIn("assertion regressed", decision["reason"])
+
     def test_critical_failure_vetoes_even_positive_gain(self):
         b=[{"case_id":str(i),"score":0.0,"critical_failures":[]} for i in range(10)]
         c=[{"case_id":str(i),"score":1.0,"critical_failures":["escape"] if i==0 else []} for i in range(10)]
@@ -189,6 +208,11 @@ class VCLTests(unittest.TestCase):
         memories.mkdir(parents=True)
         target=skills/"sample"/"SKILL.md"
         target.write_text("Be honest.\\n")
+        # Same content in a second skill: a proof for the first must not
+        # authorize the second just because its contents have the same hash.
+        twin = skills / "other" / "SKILL.md"
+        twin.parent.mkdir(parents=True)
+        twin.write_text(target.read_text())
         (memories/"history.md").write_text("Previous relevant experience.\\n")
         environ={"HOME":str(home),"SRI_VCL_ENABLED":"1",
                  "SRI_VCL_SUITE":str(self.suite_file),
@@ -232,6 +256,8 @@ class VCLTests(unittest.TestCase):
                                 self.assertIn("VERIFIED LEARNING",text)
                                 self.assertIn(f"#{pid} promote",text)
                                 self.assertTrue(promotion.authorization(p))
+                                self.assertFalse(promotion.authorization(
+                                    dict(p, target_path=str(twin))))
                                 # Suite tampering invalidates an otherwise good proof.
                                 original_suite=self.suite_file.read_bytes()
                                 self.suite_file.write_bytes(original_suite+b" ")

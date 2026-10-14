@@ -154,6 +154,13 @@ def decide(baseline: list[dict], candidate: list[dict], policy: Policy = Policy(
         return {"decision": "hold", "reason": "case order or identity mismatch"}
     if any(r["critical_failures"] for r in candidate):
         return {"decision": "reject", "reason": "candidate violated a critical invariant"}
+    # Averages can hide a newly failing check if a different check in the
+    # same case improves. Preserve every previously satisfied assertion.
+    if any(
+        set(c.get("failed_checks", ())) - set(b.get("failed_checks", ()))
+        for b, c in zip(baseline, candidate)
+    ):
+        return {"decision": "reject", "reason": "previously passing assertion regressed"}
     deltas = [c["score"] - b["score"] for b, c in zip(baseline, candidate)]
     improved = sum(d > 1e-9 for d in deltas)
     regressed = sum(d < -1e-9 for d in deltas)
@@ -328,7 +335,8 @@ def evaluate(proposal: dict, *, suite_path: Path, runner_path: Path,
                     raise EvaluationError("runner mutated evaluation input snapshot")
                 scores.append(score_case(case, output))
         verdict = decide(baseline_scores, candidate_scores, policy)
-        return {**verdict, "suite_version": suite.version, "suite_sha256": suite.digest,
+        return {**verdict, "target_relative_path": rel.as_posix(),
+                "suite_version": suite.version, "suite_sha256": suite.digest,
                 "runner_sha256": runner_sha256, "policy_sha256": policy.digest(),
                 "execution_provenance": pinned_provenance,
                 "baseline_file_sha256": baseline_file_sha, "candidate_file_sha256": candidate_sha,
