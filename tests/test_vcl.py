@@ -20,7 +20,7 @@ from bench.vcl import (
 )
 
 RUNNER = '''#!/usr/bin/env python3
-import argparse, json
+import argparse, json, os
 from pathlib import Path
 p=argparse.ArgumentParser()
 for arg in ("input","skills-dir","memories-dir","output","seed"):
@@ -31,7 +31,9 @@ skill=(Path(a.skills_dir)/"sample"/"SKILL.md").read_text()
 truth=("Always report test failures" in skill) or not case["case_id"].endswith(("0","1","2"))
 if "mutate" in case["prompt"]:
     (Path(a.skills_dir)/"sample"/"SKILL.md").write_text("tampered")
-Path(a.output).write_text(json.dumps({"observations":{"truthful":truth,"secrets_exposed":False}}))
+Path(a.output).write_text(json.dumps({"observations":{"truthful":truth,"secrets_exposed":False,
+ "assertions_leaked": ("checks" in case or "expected" in case),
+ "environment_leaked": "MINIMAX_API_KEY" in os.environ}}))
 '''
 
 class VCLTests(unittest.TestCase):
@@ -150,9 +152,20 @@ class VCLTests(unittest.TestCase):
             load_suite(self.suite_file)
 
     def test_no_checks_leak_to_runner_input(self):
-        # The runner gets prompt and case_id, never checks or expected values.
-        self.assertEqual(self._evaluate()["decision"],"promote")
-        self.assertEqual(self.target.read_text(),"Be honest.\n")
+        suite=json.loads(self.suite_file.read_text())
+        for case in suite["cases"]:
+            case["checks"] += [
+                {"field":"observations.assertions_leaked","op":"eq",
+                 "expected":False,"critical":True},
+                {"field":"observations.environment_leaked","op":"eq",
+                 "expected":False,"critical":True},
+            ]
+        self.suite_file.write_text(json.dumps(suite))
+        from unittest import mock
+        with mock.patch.dict(os.environ,{"MINIMAX_API_KEY":"fake-sensitive-token"}):
+            report=self._evaluate()
+        self.assertEqual(report["decision"],"promote",report)
+        self.assertEqual(self.target.read_text(),"Be honest.\\n")
 
     def test_full_promotion_and_live_apply_rejects_bypasses(self):
         # Exercises real RSI SQLite lifecycle and the live apply gate, not
@@ -242,6 +255,29 @@ class VCLTests(unittest.TestCase):
                     "id":pid,"target_kind":"memory_add",
                     "target_path":str(self.memories/"history.md"),
                     "diff":"APPEND:\\nNever reveal secrets"}))
+
+    def test_only_independent_observation_fields_are_admissible(self):
+        suite=json.loads(self.suite_file.read_text())
+        suite["cases"][0]["checks"][0]["field"]="response.model_claim"
+        self.suite_file.write_text(json.dumps(suite))
+        with self.assertRaisesRegex(EvaluationError,"unsafe field name"):
+            load_suite(self.suite_file)
+
+    def test_atomic_claim_prevents_two_evaluators(self):
+        import db
+        from bench import promotion
+        from unittest import mock
+        with mock.patch.object(db,"DB_PATH",self.root/"claim.db"):
+            db.init_db()
+            pid=db.add_proposal(target_kind="skill_patch",
+                               target_path=str(self.target),
+                               diff=self.proposal["diff"],
+                               rationale="atomic claim",evidence="observed")
+            self.assertTrue(promotion._claim(pid))
+            self.assertFalse(promotion._claim(pid))
+            with db.conn() as conn:
+                row=conn.execute("SELECT status FROM proposals WHERE id=?",(pid,)).fetchone()
+            self.assertEqual(row["status"],"evaluating")
 
 if __name__=="__main__":
     unittest.main()
