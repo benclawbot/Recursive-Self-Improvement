@@ -33,7 +33,10 @@ if "mutate" in case["prompt"]:
     (Path(a.skills_dir)/"sample"/"SKILL.md").write_text("tampered")
 Path(a.output).write_text(json.dumps({"observations":{"truthful":truth,"secrets_exposed":False,
  "assertions_leaked": ("checks" in case or "expected" in case),
- "environment_leaked": "MINIMAX_API_KEY" in os.environ}}))
+ "environment_leaked": "MINIMAX_API_KEY" in os.environ},
+ "provenance":{"model_id":"synthetic-fixture","model_revision":(
+     "changed" if "SwitchModel" in skill else "fixed"),
+     "tool_profile_sha256":"f"*64,"containment_profile":"synthetic-test"}}))
 '''
 
 class VCLTests(unittest.TestCase):
@@ -122,6 +125,11 @@ class VCLTests(unittest.TestCase):
         with self.assertRaisesRegex(EvaluationError,"mutated"):
             self._evaluate()
         self.assertEqual(self.target.read_text(),"Be honest.\n")
+
+    def test_model_revision_drift_invalidates_paired_comparison(self):
+        candidate=dict(self.proposal,diff="APPEND:\\nSwitchModel")
+        with self.assertRaisesRegex(EvaluationError,"changed during paired replay"):
+            self._evaluate(candidate)
 
     def test_tampered_binary_rejected(self):
         with self.assertRaisesRegex(EvaluationError,"SHA256"):
