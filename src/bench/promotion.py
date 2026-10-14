@@ -58,6 +58,17 @@ def _receipt(proposal_id: int, decision: str, reason: str, proof: dict) -> None:
         else:
             conn.execute("UPDATE proposals SET status='held' WHERE id=? AND status='evaluating'",
                          (proposal_id,))
+    # Feedback from genuine comparative evaluations reaches the existing
+    # proposer through lessons_learned. Keep holdout case details private:
+    # the proposer sees only aggregate outcomes and broad failure classes.
+    if proof.get("suite_sha256"):
+        category = "gap" if decision in ("reject", "hold") else "lesson"
+        gain = proof.get("gain", "not_computable")
+        message = (f"Verified evaluation proposal #{proposal_id}: {decision}; "
+                   f"reason={reason}; aggregate_gain={gain}; "
+                   f"candidate_score={proof.get('candidate_score', 'not_computable')}. "
+                   "Use fresh session evidence before proposing a correction.")
+        db.add_lesson(category=category, content=message, source=f"vcl:{proposal_id}")
 
 def run() -> dict:
     if not enabled():
