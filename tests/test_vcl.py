@@ -203,6 +203,11 @@ class VCLTests(unittest.TestCase):
                                 self.assertFalse(promotion.authorization(p))
                                 self.suite_file.write_bytes(original_suite)
                                 self.assertTrue(promotion.authorization(p))
+                                # Even a different memory edit invalidates the replay snapshot.
+                                (memories/"history.md").write_text("Another newer lesson")
+                                self.assertFalse(promotion.authorization(p))
+                                (memories/"history.md").write_text("Previous relevant experience.\\n")
+                                self.assertTrue(promotion.authorization(p))
                                 # A stale target also invalidates the authorization.
                                 target.write_text("Modified after evaluation!")
                                 self.assertFalse(promotion.authorization(p))
