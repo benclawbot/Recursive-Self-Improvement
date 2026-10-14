@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 import db
-from bench.vcl import EvaluationError, Policy, evaluate, file_hash
+from bench.vcl import EvaluationError, Policy, evaluate, file_hash, tree_hash
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS vcl_receipts (
@@ -109,6 +109,8 @@ def authorization(proposal: dict) -> bool:
             and proposal.get("target_kind") == "skill_patch"
             and proof.get("diff_sha256") == hashlib.sha256(proposal["diff"].encode()).hexdigest()
             and proof.get("baseline_file_sha256") == file_hash(Path(proposal["target_path"]))
+            and proof.get("baseline_skills_tree_sha256") == tree_hash(Path.home() / ".hermes" / "skills")
+            and proof.get("baseline_memories_tree_sha256") == tree_hash(Path.home() / ".hermes" / "memories")
             and proof.get("suite_sha256") == file_hash(Path(os.environ["SRI_VCL_SUITE"]))
             and proof.get("runner_sha256") == file_hash(Path(os.environ["SRI_VCL_RUNNER"]))
             and proof.get("policy_sha256") == Policy().digest()
