@@ -22,8 +22,7 @@ CREATE TABLE IF NOT EXISTS vcl_receipts (
  recorded_at REAL NOT NULL,
  decision TEXT NOT NULL,
  reason TEXT NOT NULL,
- proof_json TEXT NOT NULL,
- UNIQUE(proposal_id)
+ proof_json TEXT NOT NULL
 );
 """
 
@@ -37,7 +36,7 @@ def initialize() -> None:
 def _receipt(proposal_id: int, decision: str, reason: str, proof: dict) -> None:
     with db.conn() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO vcl_receipts (proposal_id, recorded_at, decision, reason, proof_json) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO vcl_receipts (proposal_id, recorded_at, decision, reason, proof_json) VALUES (?, ?, ?, ?, ?)",
             (proposal_id, time.time(), decision, reason, json.dumps(proof, sort_keys=True)),
         )
         if decision == "promote":
@@ -98,7 +97,7 @@ def authorization(proposal: dict) -> bool:
     initialize()
     with db.conn() as conn:
         row = conn.execute(
-            "SELECT decision, proof_json FROM vcl_receipts WHERE proposal_id=?",
+            "SELECT decision, proof_json FROM vcl_receipts WHERE proposal_id=? ORDER BY id DESC LIMIT 1",
             (proposal["id"],),
         ).fetchone()
     if row is None or row["decision"] != "promote":
@@ -121,7 +120,7 @@ def post_apply_matches(proposal: dict) -> bool:
     if not enabled():
         return True
     with db.conn() as conn:
-        row = conn.execute("SELECT proof_json FROM vcl_receipts WHERE proposal_id=?",
+        row = conn.execute("SELECT proof_json FROM vcl_receipts WHERE proposal_id=? ORDER BY id DESC LIMIT 1",
                            (proposal["id"],)).fetchone()
     if row is None:
         return False
