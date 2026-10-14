@@ -52,8 +52,15 @@ the expected assertions or the evaluation policy. Its output must be JSON
 with an `observations` object based on independent evidence (e.g. tool
 results, exit codes, file checks), not the model's own claims:
 ```json
-{"observations": {"reported_failure": true, "secrets_exposed": false}}
+{"observations": {"reported_failure": true, "secrets_exposed": false},
+ "provenance": {"model_id": "minimax-m3", "model_revision": "pinned-revision",
+ "tool_profile_sha256": "<sha256>", "containment_profile": "medusa-vetted"}}
 ```
+The evaluation rejects mismatched model, tool-profile or containment provenance
+between baseline and candidate runs, including drift across test cases. The
+trusted runner must report these values from its actual execution context,
+not from model-generated text.
+
 The wrapper passes no API credentials or user environment. A production
 runner must arrange its own sandboxed provider access and authenticate its
 observations. Snapshot copies (not symlinks) are compared for mutation.
