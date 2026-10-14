@@ -165,7 +165,7 @@ class VCLTests(unittest.TestCase):
         with mock.patch.dict(os.environ,{"MINIMAX_API_KEY":"fake-sensitive-token"}):
             report=self._evaluate()
         self.assertEqual(report["decision"],"promote",report)
-        self.assertEqual(self.target.read_text(),"Be honest.\\n")
+        self.assertEqual(self.target.read_text(),"Be honest.\n")
 
     def test_full_promotion_and_live_apply_rejects_bypasses(self):
         # Exercises real RSI SQLite lifecycle and the live apply gate, not
