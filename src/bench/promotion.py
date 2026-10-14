@@ -33,6 +33,19 @@ def initialize() -> None:
     with db.conn() as conn:
         conn.executescript(SCHEMA)
 
+def _claim(proposal_id: int) -> bool:
+    """Atomically reserve one proposal; a crash leaves it held for inspection.
+
+    This deliberately favors fail-closed recovery over automatic retry when
+    a worker crashes halfway through a potentially side-effecting replay.
+    """
+    with db.conn() as conn:
+        result = conn.execute(
+            "UPDATE proposals SET status='evaluating' WHERE id=? AND status='pending'",
+            (proposal_id,),
+        )
+        return result.rowcount == 1
+
 def _receipt(proposal_id: int, decision: str, reason: str, proof: dict) -> None:
     with db.conn() as conn:
         conn.execute(
@@ -40,10 +53,10 @@ def _receipt(proposal_id: int, decision: str, reason: str, proof: dict) -> None:
             (proposal_id, time.time(), decision, reason, json.dumps(proof, sort_keys=True)),
         )
         if decision == "promote":
-            conn.execute("UPDATE proposals SET status='merged', merged_at=? WHERE id=? AND status='pending'",
+            conn.execute("UPDATE proposals SET status='merged', merged_at=? WHERE id=? AND status='evaluating'",
                          (time.time(), proposal_id))
         else:
-            conn.execute("UPDATE proposals SET status='held' WHERE id=? AND status='pending'",
+            conn.execute("UPDATE proposals SET status='held' WHERE id=? AND status='evaluating'",
                          (proposal_id,))
 
 def run() -> dict:
@@ -60,6 +73,8 @@ def run() -> dict:
     summary = {"promote": 0, "reject": 0, "hold": 0}
     for row in rows:
         p = dict(row)
+        if not _claim(int(p["id"])):
+            continue  # another evaluator claimed it
         try:
             if p["judge_verdict"] != "approve" or p["judge_error"]:
                 decision = "hold"
