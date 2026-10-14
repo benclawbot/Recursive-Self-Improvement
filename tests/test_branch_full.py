@@ -248,7 +248,7 @@ print("\n[9] end-to-end via apply.run() with real merged proposal")
 # Use a throwaway skill in ~/.hermes/skills/_sri_test_/ so we can mutate
 # and revert without touching real skills. (apply.py will reject if
 # not under HERMES_SKILLS.)
-real_test_skill_dir = Path("/home/thomas/.hermes/skills/_sri_test_skill_")
+real_test_skill_dir = Path.home() / ".hermes" / "skills" / "_sri_test_skill_"
 real_test_skill_dir.mkdir(parents=True, exist_ok=True)
 skill_md = real_test_skill_dir / "SKILL.md"
 skill_md.write_text("---\nname: sri-test-skill\n---\n# sri-test\nORIGINAL_LINE\n")
@@ -294,7 +294,7 @@ check("applied_outcomes.cycle_id is set", cid is not None, f"got {cid}")
 import subprocess
 r = subprocess.run(
     ["python3", "src/apply.py", "--revert", cid],
-    cwd="/home/thomas/Recursive-Self-Improvement",
+    cwd=str(Path(__file__).resolve().parents[1]),
     env={**os.environ, "SRI_DB_PATH": str(db.DB_PATH), "SRI_BRANCHES_DIR": str(branch.BRANCHES_DIR), "SRI_BACKUP_DIR": os.environ["SRI_BACKUP_DIR"]},
     capture_output=True, text=True,
 )
