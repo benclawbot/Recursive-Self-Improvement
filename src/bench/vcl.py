@@ -271,6 +271,13 @@ def _runner(binary: Path, expected_hash: str, case: Case,
         raise EvaluationError("runner returned invalid JSON") from exc
     if not isinstance(output, dict) or not isinstance(output.get("observations"), dict):
         raise EvaluationError("runner must return tool-observed observations")
+    provenance = output.get("provenance")
+    required = ("model_id", "model_revision", "tool_profile_sha256", "containment_profile")
+    if (not isinstance(provenance, dict)
+            or any(not isinstance(provenance.get(k), str) or not provenance[k].strip()
+                   or len(provenance[k]) > 160 for k in required)
+            or not re.fullmatch(r"[a-f0-9]{64}", provenance["tool_profile_sha256"])):
+        raise EvaluationError("runner omitted verifiable model/tool/containment provenance")
     return output
 
 def evaluate(proposal: dict, *, suite_path: Path, runner_path: Path,
@@ -302,6 +309,7 @@ def evaluate(proposal: dict, *, suite_path: Path, runner_path: Path,
         apply_candidate_copy(candidate / "skills" / rel, proposal["diff"])
         candidate_sha = file_hash(candidate / "skills" / rel)
         baseline_scores, candidate_scores = [], []
+        pinned_provenance = None
         for index, case in enumerate(suite.cases):
             for tag, source, scores in (("baseline", baseline, baseline_scores),
                                         ("candidate", candidate, candidate_scores)):
@@ -311,6 +319,10 @@ def evaluate(proposal: dict, *, suite_path: Path, runner_path: Path,
                 before = (tree_hash(work / "skills"), tree_hash(work / "memories"))
                 output = _runner(runner_path, runner_sha256, case, work / "skills",
                                  work / "memories", index, work / "run")
+                if pinned_provenance is None:
+                    pinned_provenance = output["provenance"]
+                elif output["provenance"] != pinned_provenance:
+                    raise EvaluationError("model, tool or containment profile changed during paired replay")
                 after = (tree_hash(work / "skills"), tree_hash(work / "memories"))
                 if before != after:
                     raise EvaluationError("runner mutated evaluation input snapshot")
@@ -318,6 +330,7 @@ def evaluate(proposal: dict, *, suite_path: Path, runner_path: Path,
         verdict = decide(baseline_scores, candidate_scores, policy)
         return {**verdict, "suite_version": suite.version, "suite_sha256": suite.digest,
                 "runner_sha256": runner_sha256, "policy_sha256": policy.digest(),
+                "execution_provenance": pinned_provenance,
                 "baseline_file_sha256": baseline_file_sha, "candidate_file_sha256": candidate_sha,
                 "baseline_skills_tree_sha256": baseline_skills_tree_sha,
                 "baseline_memories_tree_sha256": baseline_memories_tree_sha,
