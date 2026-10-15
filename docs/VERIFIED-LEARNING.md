@@ -121,3 +121,7 @@ The tests include a controlled fake replay adapter to exercise exact outcome
 comparisons and safety failure paths; **they are not evidence of real-world
 agent improvement**. Real promotion requires an externally contained runner
 and curated real-agent fixtures.
+
+## Post-merge hardening
+
+The evaluation suite must include independently observed critical fields `observations.truthful`, `observations.secrets_exposed`, and `observations.containment_violation`. A missing critical safety category fails suite validation. Abandoned evaluator claims become durable holds rather than being silently retried. VCL file application stages verified bytes and atomically replaces the target under an RSI advisory lock. This lock coordinates RSI writers but does **not** stop non-cooperating filesystem writers. The mandatory Medusa-contained production runner and operator-curated real behavioral corpus remain separate prerequisites; do not enable VCL in production without both.

@@ -24,6 +24,11 @@ CREATE TABLE IF NOT EXISTS vcl_receipts (
  reason TEXT NOT NULL,
  proof_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS vcl_claims (
+ proposal_id INTEGER PRIMARY KEY,
+ claimed_at REAL NOT NULL,
+ reason TEXT NOT NULL DEFAULT 'evaluating'
+);
 """
 
 def enabled() -> bool:
@@ -44,7 +49,27 @@ def _claim(proposal_id: int) -> bool:
             "UPDATE proposals SET status='evaluating' WHERE id=? AND status='pending'",
             (proposal_id,),
         )
-        return result.rowcount == 1
+        if result.rowcount == 1:
+            conn.execute("INSERT INTO vcl_claims (proposal_id,claimed_at) VALUES (?,?)",
+                         (proposal_id, time.time()))
+            return True
+        return False
+
+def recover_interrupted(max_age_seconds: int = 3600) -> int:
+    """Hold abandoned evaluations, never auto-retry potentially side-effecting runs."""
+    initialize()
+    with db.conn() as conn:
+        abandoned = conn.execute(
+            """SELECT proposal_id FROM vcl_claims WHERE claimed_at < ? AND
+               proposal_id IN (SELECT id FROM proposals WHERE status='evaluating')""",
+            (time.time() - max_age_seconds,)).fetchall()
+        for row in abandoned:
+            pid = row["proposal_id"]
+            conn.execute("UPDATE proposals SET status='held' WHERE id=? AND status='evaluating'", (pid,))
+            conn.execute("UPDATE vcl_claims SET reason='abandoned' WHERE proposal_id=?", (pid,))
+            conn.execute("INSERT INTO vcl_receipts (proposal_id,recorded_at,decision,reason,proof_json) "
+                         "VALUES (?,?,?,?,?)", (pid,time.time(),'hold','interrupted evaluation', '{}'))
+        return len(abandoned)
 
 def _receipt(proposal_id: int, decision: str, reason: str, proof: dict) -> None:
     with db.conn() as conn:
@@ -52,6 +77,7 @@ def _receipt(proposal_id: int, decision: str, reason: str, proof: dict) -> None:
             "INSERT INTO vcl_receipts (proposal_id, recorded_at, decision, reason, proof_json) VALUES (?, ?, ?, ?, ?)",
             (proposal_id, time.time(), decision, reason, json.dumps(proof, sort_keys=True)),
         )
+        conn.execute("UPDATE vcl_claims SET reason='completed' WHERE proposal_id=?", (proposal_id,))
         if decision == "promote":
             conn.execute("UPDATE proposals SET status='merged', merged_at=? WHERE id=? AND status='evaluating'",
                          (time.time(), proposal_id))
@@ -74,6 +100,7 @@ def run() -> dict:
     if not enabled():
         return {"enabled": False}
     initialize()
+    recovered = recover_interrupted()
     with db.conn() as conn:
         rows = conn.execute(
             """SELECT p.*, j.verdict AS judge_verdict, j.judge_error AS judge_error
@@ -81,7 +108,7 @@ def run() -> dict:
                  SELECT id FROM judge_verdicts WHERE proposal_id=p.id ORDER BY id DESC LIMIT 1)
                WHERE p.status='pending' ORDER BY p.id"""
         ).fetchall()
-    summary = {"promote": 0, "reject": 0, "hold": 0}
+    summary = {"promote": 0, "reject": 0, "hold": 0, "recovered": recovered}
     for row in rows:
         p = dict(row)
         if not _claim(int(p["id"])):

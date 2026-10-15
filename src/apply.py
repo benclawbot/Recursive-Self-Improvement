@@ -150,6 +150,43 @@ def _apply_patch(target: Path, diff: str) -> bool:
         pfile.unlink(missing_ok=True)
 
 
+
+def _atomic_verified_patch(target: Path, diff: str, before_sha: str) -> bool:
+    """Stage the exact verified transformation and atomically replace target.
+
+    Lock coordinates RSI processes. External non-cooperating writers may still
+    race and require stronger filesystem isolation at production integration.
+    """
+    import fcntl
+    import hashlib
+    import tempfile
+    import stat
+    from bench.vcl import apply_candidate_copy, file_hash
+    lockdir = BACKUP_DIR / "locks"
+    lockdir.mkdir(parents=True, exist_ok=True)
+    lock = lockdir / (hashlib.sha256(str(target).encode()).hexdigest() + ".lock")
+    with lock.open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        staged = None
+        try:
+            if not target.is_file() or target.is_symlink() or file_hash(target) != before_sha:
+                return False
+            fd, name = tempfile.mkstemp(prefix=".sri-vcl-", dir=target.parent)
+            staged = Path(name)
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(target.read_bytes())
+            staged.chmod(stat.S_IMODE(target.stat().st_mode))
+            apply_candidate_copy(staged, diff)
+            if file_hash(target) != before_sha:
+                return False
+            os.replace(staged, target)
+            staged = None
+            return True
+        finally:
+            if staged is not None:
+                staged.unlink(missing_ok=True)
+
+
 def apply_proposal(p: dict, cycle_id: str | None = None) -> bool:
     """Apply a single approved proposal. Returns True on success.
 
@@ -183,7 +220,17 @@ def apply_proposal(p: dict, cycle_id: str | None = None) -> bool:
     _log(f"  applying #{p['id']} ({kind}) → {target}")
     backup = _backup(target_p)
     _log(f"    backup: {backup}")
-    ok = _apply_unified_diff(target_p, p["diff"])
+    if vcl_promotion.enabled():
+        # Compute the evaluated precondition from the authorization receipt.
+        with db.conn() as conn:
+            receipt = conn.execute("SELECT proof_json FROM vcl_receipts WHERE proposal_id=? AND decision='promote' ORDER BY id DESC LIMIT 1",
+                                   (p["id"],)).fetchone()
+        if receipt is None:
+            return False
+        expected_before = json.loads(receipt["proof_json"])["baseline_file_sha256"]
+        ok = _atomic_verified_patch(target_p, p["diff"], expected_before)
+    else:
+        ok = _apply_unified_diff(target_p, p["diff"])
     # Refuse byte-for-byte deviations from the evaluated candidate.
     if ok and vcl_promotion.enabled() and not vcl_promotion.post_apply_matches(p):
         _log(f"  reject proposal #{p['id']}: applied bytes differ from evaluated candidate")
