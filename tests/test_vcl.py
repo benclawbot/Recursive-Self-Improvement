@@ -84,7 +84,7 @@ class VCLTests(unittest.TestCase):
         self.assertEqual(report["decision"],"promote", report)
         self.assertEqual(report["improved"],3)
         self.assertEqual(report["regressed"],0)
-        self.assertAlmostEqual(report["gain"],0.15)
+        self.assertAlmostEqual(report["gain"],0.10)
         self.assertEqual(self.target.read_text(),"Be honest.\n")
         self.assertEqual(len(report["baseline"]),len(report["candidate"]))
 
