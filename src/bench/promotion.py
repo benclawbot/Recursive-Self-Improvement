@@ -44,6 +44,7 @@ def _claim(proposal_id: int) -> bool:
     This deliberately favors fail-closed recovery over automatic retry when
     a worker crashes halfway through a potentially side-effecting replay.
     """
+    initialize()
     with db.conn() as conn:
         result = conn.execute(
             "UPDATE proposals SET status='evaluating' WHERE id=? AND status='pending'",
