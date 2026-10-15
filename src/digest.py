@@ -148,6 +148,21 @@ def load_self_incidents(cur: sqlite3.Cursor) -> List[Tuple[str, int, float]]:
     return cur.fetchall()
 
 
+def load_verified_learning(cur: sqlite3.Cursor, limit: int = 6) -> List[dict]:
+    """Recent autonomous evaluation decisions, for passive human oversight."""
+    exists = cur.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vcl_receipts'"
+    ).fetchone()
+    if not exists:
+        return []
+    cur.execute(
+        """SELECT proposal_id, decision, reason, recorded_at FROM vcl_receipts
+           ORDER BY id DESC LIMIT ?""",
+        (limit,),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
 def detect_stale_log() -> Tuple[str, float] | None:
     """Returns (filename, hours_stale) if the latest log is older than the
     no_output threshold (13h). The cycle job writes one log per tick."""
@@ -238,6 +253,7 @@ def _build_digest() -> str:
     overrides = load_thomas_overrides(cur)
     pipeline = load_pipeline_7d(cur)
     incidents = load_self_incidents(cur)
+    vcl_receipts = load_verified_learning(cur)
     stale = detect_stale_log()
     con.close()
 
@@ -266,6 +282,18 @@ def _build_digest() -> str:
     for line in format_confirm_needed(stale, overrides):
         parts.append(line)
     parts.append("")
+
+    if vcl_receipts or os.environ.get("SRI_VCL_ENABLED") == "1":
+        parts.append("▸ VERIFIED LEARNING (automatic; FYI):")
+        if vcl_receipts:
+            for item in vcl_receipts:
+                parts.append(
+                    f"  #{item['proposal_id']} {item['decision']} — "
+                    f"{_truncate(item['reason'], 105)}"
+                )
+        else:
+            parts.append("  (no evaluations recorded yet)")
+        parts.append("")
 
     parts.append("▸ CONTEXT (FYI):")
     sandbox_note = f" ({pipeline['merged_sandbox']} test/sandbox)" if pipeline['merged_sandbox'] else ""

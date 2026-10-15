@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import db
 import branch
+from bench import promotion as vcl_promotion
 
 
 import os as _os_apply
@@ -155,6 +156,9 @@ def apply_proposal(p: dict, cycle_id: str | None = None) -> bool:
     If cycle_id is provided, the applied_outcomes row is linked to that
     branch so `python apply.py --revert <cycle_id>` can roll it back.
     """
+    if vcl_promotion.enabled() and not vcl_promotion.authorization(p):
+        _log(f"  reject proposal #{p['id']}: missing or stale VCL authorization")
+        return False
     kind = p["target_kind"]
     target = p.get("target_path", "")
 
@@ -180,6 +184,10 @@ def apply_proposal(p: dict, cycle_id: str | None = None) -> bool:
     backup = _backup(target_p)
     _log(f"    backup: {backup}")
     ok = _apply_unified_diff(target_p, p["diff"])
+    # Refuse byte-for-byte deviations from the evaluated candidate.
+    if ok and vcl_promotion.enabled() and not vcl_promotion.post_apply_matches(p):
+        _log(f"  reject proposal #{p['id']}: applied bytes differ from evaluated candidate")
+        ok = False
     if ok:
         # Record the application so we can later grade whether it helped.
         # The grading happens in grade_outcomes() — kept out of the hot path

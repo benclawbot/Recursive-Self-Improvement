@@ -30,6 +30,7 @@ import grade_outcomes
 import memory_hygiene
 import incident_watcher
 import checkpoint
+from bench import promotion as vcl_promotion
 
 
 def cycle(skip_apply: bool = False, judge_only: bool = False,
@@ -71,6 +72,9 @@ def cycle(skip_apply: bool = False, judge_only: bool = False,
     print("STEP 2: JUDGE")
     print("=" * 60)
     pending = db.pending_proposals()
+    # In VCL mode, only judge unjudged proposals; held work is not retried.
+    if vcl_promotion.enabled():
+        pending = [p for p in pending if p.get("judge_verdict") is None]
     if pending:
         judge.judge_batch(pending)
         counters["judge_calls"] = len(pending)
@@ -78,6 +82,13 @@ def cycle(skip_apply: bool = False, judge_only: bool = False,
         print("  nothing to judge")
     result["judge"] = {"count": len(pending)}
     result["steps"].append("judge")
+
+    if vcl_promotion.enabled() and not dry_run:
+        print("=" * 60)
+        print("STEP 2.5: VERIFIED LEARNING PROMOTION")
+        print("=" * 60)
+        result["vcl_promotion"] = vcl_promotion.run()
+        result["steps"].append("vcl_promotion")
 
     if not skip_apply and not dry_run:
         print("=" * 60)

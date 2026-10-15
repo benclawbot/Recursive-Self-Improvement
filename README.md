@@ -40,6 +40,22 @@ is the metric that drives the rubric to refine itself.
    ╚═══════════════════════════════════════════════════════╝
 ```
 
+## Verified Continuous Learning (opt-in)
+
+RSI includes a fail-closed, evidence-backed promotion gate for approved
+`skill_patch` proposals. It compares a frozen baseline with a candidate
+through the same curated test cases and a SHA256-pinned, externally contained
+replay runner. Critical safety failures or any paired regression veto
+promotion; inconclusive results are held. Successful low-risk proposals can
+promote **without per-proposal human approval**, while an operator remains
+outside the learning loop to control policy and monitor receipts.
+
+This is **disabled by default** until an independently vetted replay runner
+and real-agent evaluation suite are configured. The included CI tests verify
+the evaluator and authorization mechanics, not real agent improvement.
+See [Verified Continuous Learning](docs/VERIFIED-LEARNING.md) for the operator
+boundary, required integrations, test protocol and limitations.
+
 ## Why this exists
 
 Single-model self-improvement is an echo chamber. The model proposes,

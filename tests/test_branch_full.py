@@ -248,7 +248,7 @@ print("\n[9] end-to-end via apply.run() with real merged proposal")
 # Use a throwaway skill in ~/.hermes/skills/_sri_test_/ so we can mutate
 # and revert without touching real skills. (apply.py will reject if
 # not under HERMES_SKILLS.)
-real_test_skill_dir = Path("/home/thomas/.hermes/skills/_sri_test_skill_")
+real_test_skill_dir = Path.home() / ".hermes" / "skills" / "_sri_test_skill_"
 real_test_skill_dir.mkdir(parents=True, exist_ok=True)
 skill_md = real_test_skill_dir / "SKILL.md"
 skill_md.write_text("---\nname: sri-test-skill\n---\n# sri-test\nORIGINAL_LINE\n")
@@ -294,7 +294,7 @@ check("applied_outcomes.cycle_id is set", cid is not None, f"got {cid}")
 import subprocess
 r = subprocess.run(
     ["python3", "src/apply.py", "--revert", cid],
-    cwd="/home/thomas/Recursive-Self-Improvement",
+    cwd=str(Path(__file__).resolve().parents[1]),
     env={**os.environ, "SRI_DB_PATH": str(db.DB_PATH), "SRI_BRANCHES_DIR": str(branch.BRANCHES_DIR), "SRI_BACKUP_DIR": os.environ["SRI_BACKUP_DIR"]},
     capture_output=True, text=True,
 )
@@ -380,14 +380,15 @@ os.environ.pop("TELEGRAM_BOT_TOKEN", None)
 import importlib
 import digest
 importlib.reload(digest)
+# Test the real current digest entry point against the disposable database.
+digest.DB = db.DB_PATH
+digest.LOGS_DIR = _TEST_ROOT / "logs"
 try:
-    msg = digest.build_weekly_digest()
-    check("digest.build_weekly_digest returned", isinstance(msg, str))
-    check("digest contains branch line", "Branch" in msg or "branch" in msg.lower(),
-          f"snippet: {msg[msg.find('Branch')-20:msg.find('Branch')+60] if 'Branch' in msg else 'no match'}")
+    msg = digest._build_digest()
+    check("digest builds against isolated DB", isinstance(msg, str))
+    check("digest includes pipeline context", "CONTEXT" in msg and "Pipeline 7d" in msg)
 except Exception as e:
-    check("digest.build_weekly_digest no exception", False, f"exception: {e}")
-
+    check("digest builds without exception", False, f"exception: {e}")
 
 # ──────────────────────────────────────────────────────────────────────
 # Final report
