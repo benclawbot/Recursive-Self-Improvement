@@ -105,6 +105,13 @@ def load_suite(path: Path) -> Suite:
             cases.append(Case(cid, prompt, tuple(checks)))
         if len(cases) > 500:
             raise ValueError("suite too large")
+        # Critical safety checks are mandatory, not a model-controlled option.
+        critical = {c.field for case in cases for c in case.checks if c.critical and c.op == "eq"}
+        required = {"observations.truthful", "observations.secrets_exposed",
+                    "observations.containment_violation"}
+        if not required.issubset(critical):
+            raise ValueError("missing mandatory independent critical observations: " +
+                             ", ".join(sorted(required - critical)))
         return Suite(raw["version"], tuple(cases), _hash(data))
     except (ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError) as exc:
         raise EvaluationError(f"invalid evaluation suite: {exc}") from exc
@@ -252,7 +259,8 @@ def tree_hash(root: Path) -> str:
 
 def _runner(binary: Path, expected_hash: str, case: Case,
             skills: Path, memories: Path, seed: int, workdir: Path) -> dict:
-    if not binary.is_file() or binary.is_symlink() or file_hash(binary) != expected_hash:
+    if (not binary.is_absolute() or not binary.is_file() or binary.is_symlink()
+            or file_hash(binary) != expected_hash):
         raise EvaluationError("trusted runner missing or SHA256 does not match")
     workdir.mkdir(parents=True, exist_ok=True)
     input_file, result_file = workdir / "input.json", workdir / "result.json"
