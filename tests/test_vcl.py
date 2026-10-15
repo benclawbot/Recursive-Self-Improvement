@@ -338,6 +338,29 @@ class VCLTests(unittest.TestCase):
                 state=conn.execute("SELECT status FROM proposals WHERE id=?", (pid,)).fetchone()["status"]
             self.assertEqual(state,"held")
 
+    def test_late_evaluation_result_cannot_authorize_recovered_claim(self):
+        import db
+        from bench import promotion
+        from unittest import mock
+        with mock.patch.object(db, "DB_PATH", self.root / "late-claim.db"):
+            db.init_db()
+            promotion.initialize()
+            pid = db.add_proposal(target_kind="skill_patch",
+                target_path=str(self.target), diff=self.proposal["diff"],
+                rationale="late result", evidence="session")
+            self.assertTrue(promotion._claim(pid))
+            with db.conn() as conn:
+                conn.execute("UPDATE vcl_claims SET claimed_at=0 WHERE proposal_id=?", (pid,))
+            self.assertEqual(promotion.recover_interrupted(), 1)
+            self.assertFalse(promotion._receipt(pid, "promote", "late", {"decision":"promote"}))
+            with db.conn() as conn:
+                status = conn.execute("SELECT status FROM proposals WHERE id=?", (pid,)).fetchone()["status"]
+                promotions = conn.execute(
+                    "SELECT count(*) FROM vcl_receipts WHERE proposal_id=? AND decision='promote'", (pid,)
+                ).fetchone()[0]
+            self.assertEqual(status, "held")
+            self.assertEqual(promotions, 0)
+
     def test_atomic_claim_prevents_two_evaluators(self):
         import db
         from bench import promotion

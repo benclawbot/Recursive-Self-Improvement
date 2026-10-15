@@ -72,19 +72,28 @@ def recover_interrupted(max_age_seconds: int = 3600) -> int:
                          "VALUES (?,?,?,?,?)", (pid,time.time(),'hold','interrupted evaluation', '{}'))
         return len(abandoned)
 
-def _receipt(proposal_id: int, decision: str, reason: str, proof: dict) -> None:
+def _receipt(proposal_id: int, decision: str, reason: str, proof: dict) -> bool:
+    """Finalize only a live claim; late results after recovery have no authority.
+
+    The state transition and receipt share one SQLite transaction, preventing
+    a recovered/held task from acquiring a stale promotion authorization.
+    """
+    if decision not in ("promote", "hold", "reject"):
+        raise ValueError("invalid evaluation decision")
     with db.conn() as conn:
+        state = "merged" if decision == "promote" else "held"
+        changed = conn.execute(
+            "UPDATE proposals SET status=?, merged_at=? WHERE id=? AND status='evaluating'"
+            " AND EXISTS (SELECT 1 FROM vcl_claims WHERE proposal_id=? AND reason='evaluating')",
+            (state, time.time() if decision == "promote" else None, proposal_id, proposal_id),
+        ).rowcount
+        if changed != 1:
+            return False
+        conn.execute("UPDATE vcl_claims SET reason='completed' WHERE proposal_id=?", (proposal_id,))
         conn.execute(
             "INSERT INTO vcl_receipts (proposal_id, recorded_at, decision, reason, proof_json) VALUES (?, ?, ?, ?, ?)",
             (proposal_id, time.time(), decision, reason, json.dumps(proof, sort_keys=True)),
         )
-        conn.execute("UPDATE vcl_claims SET reason='completed' WHERE proposal_id=?", (proposal_id,))
-        if decision == "promote":
-            conn.execute("UPDATE proposals SET status='merged', merged_at=? WHERE id=? AND status='evaluating'",
-                         (time.time(), proposal_id))
-        else:
-            conn.execute("UPDATE proposals SET status='held' WHERE id=? AND status='evaluating'",
-                         (proposal_id,))
     # Feedback from genuine comparative evaluations reaches the existing
     # proposer through lessons_learned. Keep holdout case details private:
     # the proposer sees only aggregate outcomes and broad failure classes.
@@ -96,6 +105,7 @@ def _receipt(proposal_id: int, decision: str, reason: str, proof: dict) -> None:
                    f"candidate_score={proof.get('candidate_score', 'not_computable')}. "
                    "Use fresh session evidence before proposing a correction.")
         db.add_lesson(category=category, content=message, source=f"vcl:{proposal_id}")
+    return True
 
 def run() -> dict:
     if not enabled():
@@ -136,8 +146,10 @@ def run() -> dict:
         except (EvaluationError, OSError, ValueError, KeyError) as exc:
             decision = "hold"
             report = {"reason": f"unverifiable: {exc}"}
-        _receipt(int(p["id"]), decision, str(report.get("reason", "")), report)
-        summary[decision] += 1
+        if _receipt(int(p["id"]), decision, str(report.get("reason", "")), report):
+            summary[decision] += 1
+        else:
+            summary["hold"] += 1  # recovered during evaluation; late result ignored
     return summary
 
 def authorization(proposal: dict) -> bool:
@@ -155,6 +167,10 @@ def authorization(proposal: dict) -> bool:
             (proposal["id"],),
         ).fetchone()
     if row is None or row["decision"] != "promote":
+        return False
+    with db.conn() as conn:
+        active = conn.execute("SELECT 1 FROM proposals WHERE id=? AND status='merged'", (proposal["id"],)).fetchone()
+    if not active:
         return False
     try:
         proof = json.loads(row["proof_json"])
